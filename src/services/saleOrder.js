@@ -9,42 +9,45 @@ import Product from '../models/base/Product.js';
 import User from '../models/base/User.js';
 import ProductDetail from '../models/base/ProductDetail.js';
 import { SALE_ORDER_STATUS } from '../common/constant/sale-order-status.js';
+import ResponseModel from '../models/response/ResponseModel.js';
 
 const SaleOrderService = {
     async getAll(user) {
         const customer = await Customer.findOne({ user: mongoose.Types.ObjectId(user._id) });
-        const saleOrders = await SaleOrder.find({ customer: mongoose.Types.ObjectId(customer._id) });
+        const saleOrders = await SaleOrder.find({
+            customer: mongoose.Types.ObjectId(customer._id),
+        });
         return saleOrders;
-    }
-    ,
+    },
     async getAllAdmin() {
         const saleOrders = await SaleOrder.find();
         return saleOrders;
-    }
-    ,
+    },
     async getById(id) {
         const saleOrder = await SaleOrder.findOne({ _id: id });
         return saleOrder;
-    }
-    ,
+    },
     async getFullById(id) {
         const saleOrder = await SaleOrder.findOne({ _id: id }).populate('voucher');
-        const customer = await Customer.findOne({_id: saleOrder.customer}).populate('user')
-        const listDetails = await SaleOrderDetail.find({saleOrder: mongoose.Types.ObjectId(id)}).populate('productDetail');
+        const customer = await Customer.findOne({ _id: saleOrder.customer }).populate('user');
+        const listDetails = await SaleOrderDetail.find({
+            saleOrder: mongoose.Types.ObjectId(id),
+        }).populate('productDetail');
         const productIds = [];
         listDetails.forEach((detail) => {
-            productIds.push(detail.productDetail.product.toString())
-        })
-        const products = await Product.find({ _id: { $in: productIds } })
+            productIds.push(detail.productDetail.product.toString());
+        });
+        const products = await Product.find({ _id: { $in: productIds } });
         listDetails.forEach((e) => {
-            const product = products.find(productCreated =>{return  productCreated._id.toString() == e.productDetail.product.toString()})
-            e.set('product',product, { strict: false })
-        })
-        saleOrder.set('listDetails',listDetails, { strict: false })
-        saleOrder.set('user',customer.user, { strict: false })
+            const product = products.find((productCreated) => {
+                return productCreated._id.toString() == e.productDetail.product.toString();
+            });
+            e.set('product', product, { strict: false });
+        });
+        saleOrder.set('listDetails', listDetails, { strict: false });
+        saleOrder.set('user', customer.user, { strict: false });
         return saleOrder;
-    }
-    ,
+    },
     async createSaleOrder(saleOrder) {
         const listDetails = saleOrder.listDetails;
         const saleOrderDetails = [];
@@ -53,60 +56,61 @@ const SaleOrderService = {
             ...saleOrder,
         });
         const result = await saleOrderSchema.save();
-        if(result){
+        if (result) {
             listDetails.forEach((detail) => {
                 detail.saleOrder = result;
                 saleOrderDetails.push(detail);
-            })
+            });
             const resultDetail = await SaleOrderDetail.insertMany(saleOrderDetails);
-            if(resultDetail){
-                const carts = await Cart.find({ customer: mongoose.Types.ObjectId(saleOrder.customer)}) || [];
+            if (resultDetail) {
+                const carts =
+                    (await Cart.find({ customer: mongoose.Types.ObjectId(saleOrder.customer) })) ||
+                    [];
                 const cartIds = [];
                 carts.forEach((cart) => {
                     cartIds.push(cart._id);
                 });
                 await CartService.deleteAllCart(cartIds);
             }
-
         }
         return result;
-    }
-    ,
-    async updateStatus(dataUpdate) {
-       const {id,canceled,activeStep } = dataUpdate;
-       let status = '';
-       if (canceled){
-           status = SALE_ORDER_STATUS.CANCELED;
-       }else{
-           status = SALE_ORDER_STATUS.getByNumber(activeStep)
-       }
-
-       if(status == SALE_ORDER_STATUS.DELIVERING){
-        const listDetails = await SaleOrderDetail.find({saleOrder: mongoose.Types.ObjectId(id)}).populate('productDetail');
-        const productDetailIds = listDetails.map(detail => detail.productDetail._id);
-        // productDetailIds.forEach(productDetail => {
-        //     const pd = await ProductDetail.findOne({_id: productDetail});
-        //     pd.stock = pd.stock - 1;
-        //     pd.save();
-        // })
-
-        for (const productDetail of productDetailIds) {
-            const pd = await ProductDetail.findOne({_id: productDetail});
-            pd.stock = pd.stock - 1;
-            pd.save();
+    },
+    async updateStatus(res, dataUpdate) {
+        const { id, canceled, activeStep } = dataUpdate;
+        let status = '';
+        if (canceled) {
+            status = SALE_ORDER_STATUS.CANCELED;
+        } else {
+            status = SALE_ORDER_STATUS.getByNumber(activeStep);
         }
 
-       }
-       const result = await SaleOrder.findOneAndUpdate({_id : id},{status});
+        if (status == SALE_ORDER_STATUS.DELIVERING) {
+            const listDetails = await SaleOrderDetail.find({
+                saleOrder: mongoose.Types.ObjectId(id),
+            }).populate('productDetail');
+            const productDetailIds = listDetails.map((detail) => detail.productDetail._id);
+
+            for (const productDetail of productDetailIds) {
+                const pd = await ProductDetail.findOne({ _id: productDetail });
+                const result = listDetails.find((detail) => detail.productDetail._id == productDetail);
+                if (result.quantity > pd.stock) {
+                    return res
+                        .status(500)
+                        .json(new ResponseModel(500, ['Vượt quá số lượng'], null));
+                } else {
+                    pd.stock = pd.stock - result.quantity;
+                    pd.save();
+                }
+            }
+        }
+        const result = await SaleOrder.findOneAndUpdate({ _id: id }, { status });
         return result;
-    }
-    ,
+    },
     async updateSaleOrder(saleOrder) {
         const result = await SaleOrder.findByIdAndUpdate(saleOrder._id, saleOrder);
         return result;
-    }
+    },
 
-    ,
     async deleteSaleOrder(saleOrderId) {
         const result = await SaleOrder.findByIdAndDelete(saleOrderId);
         return result;
@@ -116,8 +120,6 @@ const SaleOrderService = {
         const result = await SaleOrder.deleteMany({ _id: { $in: saleOrderIds } });
         return result;
     },
-
-
 };
 
 export default SaleOrderService;
